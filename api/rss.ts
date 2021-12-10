@@ -1,476 +1,315 @@
-import { NowRequest, NowResponse } from "@vercel/node";
+import { VercelRequest, VercelResponse } from "@vercel/node";
 
-import { variance, median } from "mathjs";
-import fetch from "node-fetch";
+// tools and shi
+import Web3    from 'web3';
+import fetch   from "node-fetch";
+import _       from 'lodash';
+import { max } from "mathjs";
 
-import { fetchFusePoolData } from "../src/utils/fetchFusePoolData";
-import { initFuseWithProviders, alchemyURL } from "../src/utils/web3Providers";
+// fuse utils
+import { fetchFusePoolData, USDPricedFuseAsset } from "../src/utils/fetchFusePoolData";
+import { initFuseWithProviders, alchemyURL     } from "../src/utils/web3Providers";
 
-function clamp(num, min, max) {
-  return num <= min ? min : num >= max ? max : num;
-}
+// functions (by category)
+import { 
+  checkCoingecko, checkSushiswap, checkUniswap, checkAudits, 
+  calcVolatility, 
+  fetchLatestBlock, 
+  calcOverall,
+  ScoreBlock, 
+  returnSafeTest, returnMissingTest, 
+  fetchAddressOverride, fetchMultisigOverride, fetchTestOverride  
+} from '../src/utils/rssUtils';
 
-type ThenArg<T> = T extends PromiseLike<infer U> ? U : T;
-
-const weightedCalculation = async (
-  calculation: () => Promise<number>,
-  weight: number
-) => {
-  return clamp((await calculation()) ?? 0, 0, 1) * weight;
-};
-
+// types
+import { AssetData, Score, FetchedData, BacktestConfig } from "../src/utils/rssUtils";
+ 
+// geth (alchemy)
 const fuse = initFuseWithProviders(alchemyURL);
 
-async function computeAssetRSS(address: string): Promise<{
-  liquidityUSD: number;
+// Web3
+const web3 = new Web3(alchemyURL);
 
-  mcap: number;
-  volatility: number;
-  liquidity: number;
-  swapCount: number;
-  coingeckoMetadata: number;
-  exchanges: number;
-  transfers: number;
+// url for making requests to the rss-module apis (requests are api's instead of modules so vercel can cache each asset for scoring subsequent pools)
+const url = "https://rari-rss.vercel.app/api";
+// const url = "http://localhost:3000/api";
 
-  totalScore: number;
-}> {
-  address = address.toLowerCase();
-
-  // swap sOHM to OHM with a penalty.
-  if (address === "0x04f2694c8fcee23e8fd0dfea1d4f5bb8c352111f") {
-    let OHM_RSS = await computeAssetRSS(
-      "0x383518188c0c6d7730d91b2c03a03c837814a899"
-    );
-
-    // 10% smart contract risk penalty.
-    OHM_RSS.totalScore *= 0.9;
-
-    return OHM_RSS;
-  }
-
-  // max score for ETH.
-  if (address === "0x0000000000000000000000000000000000000000") {
-    return {
-      liquidityUSD: 4_000_000_000,
-
-      mcap: 33,
-      volatility: 20,
-      liquidity: 32,
-      swapCount: 7,
-      coingeckoMetadata: 2,
-      exchanges: 3,
-      transfers: 3,
-
-      totalScore: 100,
-    };
-  }
-
-  try {
-    // Fetch all the data in parallel
-    const [
-      {
-        market_data: {
-          market_cap: { usd: asset_market_cap },
-          current_price: { usd: price_usd },
-        },
-        tickers,
-        community_data: { twitter_followers },
-      },
-
-      uniData,
-
-      sushiData,
-
-      defiCoins,
-
-      assetVariation,
-
-      ethVariation,
-    ] = await Promise.all([
-      fetch(
-        `https://api.coingecko.com/api/v3/coins/ethereum/contract/${address}`
-      ).then((res) => res.json()),
-
-      fetch("https://api.thegraph.com/subgraphs/name/uniswap/uniswap-v2", {
-        method: "post",
-
-        body: JSON.stringify({
-          query: `{
-  token(id: "${address}") {
-    totalLiquidity
-    txCount
-  }
-}`,
-        }),
-
-        headers: { "Content-Type": "application/json" },
-      }).then((res) => res.json()),
-
-      fetch(
-        "https://api.thegraph.com/subgraphs/name/zippoxer/sushiswap-subgraph-fork",
-        {
-          method: "post",
-
-          body: JSON.stringify({
-            query: `{
-            token(id: "${address}") {
-              totalLiquidity
-              txCount
-            }
-          }`,
-          }),
-
-          headers: { "Content-Type": "application/json" },
-        }
-      ).then((res) => res.json()),
-
-      fetch(
-        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&category=decentralized_finance_defi&order=market_cap_desc&per_page=10&page=1&sparkline=false`
-      )
-        .then((res) => res.json())
-        .then((array) => array.slice(0, 30)),
-
-      fetch(
-        `https://api.coingecko.com/api/v3/coins/ethereum/contract/${address}/market_chart/?vs_currency=usd&days=30`
-      )
-        .then((res) => res.json())
-        .then((data) => data.prices.map(([, price]) => price))
-        .then((prices) => variance(prices)),
-
-      fetch(
-        `https://api.coingecko.com/api/v3/coins/ethereum/market_chart/?vs_currency=usd&days=30`
-      )
-        .then((res) => res.json())
-        .then((data) => data.prices.map(([, price]) => price))
-        .then((prices) => variance(prices)),
-    ]);
-
-    const mcap = await weightedCalculation(async () => {
-      const medianDefiCoinMcap = median(
-        defiCoins.map((coin) => coin.market_cap)
-      );
-
-      // Make exception for WETH
-      if (address === "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2") {
-        return 1;
-      }
-
-      if (asset_market_cap < 1_000_000) {
-        return 0;
-      } else {
-        return asset_market_cap / medianDefiCoinMcap;
-      }
-    }, 33);
-
-    let liquidityUSD = 0;
-
-    const liquidity = await weightedCalculation(async () => {
-      const uniLiquidity = parseFloat(
-        uniData.data.token?.totalLiquidity ?? "0"
-      );
-      const sushiLiquidity = parseFloat(
-        sushiData.data.token?.totalLiquidity ?? "0"
-      );
-
-      const totalLiquidity = uniLiquidity + sushiLiquidity * price_usd;
-
-      liquidityUSD = totalLiquidity;
-
-      return totalLiquidity / 220_000_000;
-    }, 32);
-
-    const volatility = await weightedCalculation(async () => {
-      const peak = ethVariation * 3;
-
-      return 1 - assetVariation / peak;
-    }, 20);
-
-    const swapCount = await weightedCalculation(async () => {
-      const uniTxCount = parseFloat(uniData.data.token?.txCount ?? "0");
-
-      const sushiTxCount = parseFloat(sushiData.data.token?.txCount ?? "0");
-
-      const totalTxCount = uniTxCount + sushiTxCount;
-
-      return totalTxCount >= 10_000 ? 1 : 0;
-    }, 7);
-
-    const exchanges = await weightedCalculation(async () => {
-      let reputableExchanges: any[] = [];
-
-      for (const exchange of tickers) {
-        const name = exchange.market.identifier;
-
-        if (
-          !reputableExchanges.includes(name) &&
-          name !== "uniswap" &&
-          exchange.trust_score === "green"
-        ) {
-          reputableExchanges.push(name);
-        }
-      }
-
-      return reputableExchanges.length >= 3 ? 1 : 0;
-    }, 3);
-
-    const transfers = await weightedCalculation(async () => {
-      return 1;
-    }, 3);
-
-    const coingeckoMetadata = await weightedCalculation(async () => {
-      // USDC needs an exception because Circle twitter is not listed on Coingecko.
-      if (address === "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48") {
-        return 1;
-      }
-
-      return twitter_followers >= 1000 ? 1 : 0;
-    }, 2);
-
-    return {
-      liquidityUSD,
-
-      mcap,
-      volatility,
-      liquidity,
-      swapCount,
-      coingeckoMetadata,
-      exchanges,
-      transfers,
-
-      totalScore:
-        mcap +
-          volatility +
-          liquidity +
-          swapCount +
-          coingeckoMetadata +
-          exchanges +
-          transfers || 0,
-    };
-  } catch (e) {
-    console.log(e);
-
-    return {
-      liquidityUSD: 0,
-
-      mcap: 0,
-      volatility: 0,
-      liquidity: 0,
-      swapCount: 0,
-      coingeckoMetadata: 0,
-      exchanges: 0,
-      transfers: 0,
-
-      totalScore: 0,
-    };
-  }
-}
-
-export default async (request: NowRequest, response: NowResponse) => {
-  const { address, poolID } = request.query as { [key: string]: string };
+// eslint-disable-next-line import/no-anonymous-default-export
+export default async (request: VercelRequest, response: VercelResponse) => {
+  const { poolID } = request.query as { [key: string]: string };
 
   response.setHeader("Access-Control-Allow-Origin", "*");
+  response.setHeader("Cache-Control", "s-maxage=21600");
 
   let lastUpdated = new Date().toLocaleString("en-US", {
     timeZone: "America/Los_Angeles",
   });
 
-  if (address) {
-    response.setHeader("Cache-Control", "s-maxage=3600");
+  console.log('Scoring Pool ' + poolID);
 
-    response.json({ ...(await computeAssetRSS(address)), lastUpdated });
-  } else if (poolID) {
-    console.time("poolData");
-    const { assets, totalLiquidityUSD, comptroller } = (await fetchFusePoolData(
-      poolID,
-      "0x0000000000000000000000000000000000000000",
-      fuse
-    ))!;
+  const { overallScore, multisigScore, scores } = await scorePool(poolID);
 
-    console.timeEnd("poolData");
+  response.json({
+    poolID,
+    overallScore,
+    multisigScore,
+    scores,
+    lastUpdated
+  });
+}
 
-    const liquidity = await weightedCalculation(async () => {
-      return totalLiquidityUSD > 50_000 ? totalLiquidityUSD / 2_000_000 : 0;
-    }, 25);
+const scorePool = async (poolID: string) => {
+  const { 
+    assets, comptroller 
+  } = (await fetchFusePoolData( poolID, "0x0000000000000000000000000000000000000000", fuse ))!;
 
-    const collateralFactor = await weightedCalculation(async () => {
-      // @ts-ignore
-      const avgCollatFactor = assets.reduce(
-        (a, b, _, { length }) => a + b.collateralFactor / 1e16 / length,
-        0
-      );
+  const comptrollerContract = new fuse.web3.eth.Contract(
+    JSON.parse(fuse.compoundContracts["contracts/Comptroller.sol:Comptroller"].abi), comptroller
+  );
 
-      // Returns a percentage in the range of 45% -> 90% (where 90% is 0% and 45% is 100%)
-      return -1 * (1 / 45) * avgCollatFactor + 2;
-    }, 10);
+  // main promise for scoring - runs once for each pool
+  return await new Promise<ScoreBlock[]> (async (resolve) => {
 
-    const reserveFactor = await weightedCalculation(async () => {
-      // @ts-ignore
-      const avgReserveFactor = assets.reduce(
-        (a, b, _, { length }) => a + b.reserveFactor / 1e16 / length,
-        0
-      );
+    // await set of promises (each promise scoring an asset)
+    const scores = await Promise.all( assets.map( async (asset:USDPricedFuseAsset) => {
 
-      return avgReserveFactor <= 2 ? 0 : avgReserveFactor / 13;
-    }, 10);
-
-    const utilization = await weightedCalculation(async () => {
-      for (let i = 0; i < assets.length; i++) {
-        const asset = assets[i];
-
-        // If this asset has more than 75% utilization, fail
-        if (
-          // @ts-ignore
-          asset.totalSupply === "0"
-            ? false
-            : asset.totalBorrow / asset.totalSupply >= 0.75
-        ) {
-          return 0;
-        }
+      // hardcode asset test for ETH
+      if (asset.underlyingToken === '0x0000000000000000000000000000000000000000') {
+        return returnSafeTest(asset.underlyingToken, asset.underlyingSymbol);
       }
 
-      return 1;
-    }, 10);
+      // check override file to replace asset address (or return asset address if no override)
+      const addressFromOverride = fetchAddressOverride(asset.underlyingToken);
 
-    let assetsRSS: ThenArg<ReturnType<typeof computeAssetRSS>>[] = [];
-    let totalRSS = 0;
+      // test address to see if token:WETH pool exists on sushi or uni
+      const poolProvider = await testSources(addressFromOverride);
+      
+      // if asset not listed on sushiswap or uniswap
+      if (poolProvider === 'none') {
+        return returnMissingTest(asset.underlyingToken, asset.underlyingSymbol); // returns score with asterisks as values
+      } else {
 
-    let promises: Promise<any>[] = [];
+        // returns data for score calculations
+        const assetData: AssetData = await congregateAssetData(asset, addressFromOverride, comptrollerContract, poolProvider);
 
-    for (let i = 0; i < assets.length; i++) {
-      const asset = assets[i];
+        // score the asset
+        const scoreBlock: ScoreBlock = await scoreAsset(addressFromOverride, assetData);
 
-      console.time(asset.underlyingSymbol);
-      promises.push(
-        fetch(
-          `http://${process.env.VERCEL_URL}/api/rss?address=` +
-            asset.underlyingToken
-        )
-          .then((res) => res.json())
-          .then((rss) => {
-            assetsRSS[i] = rss;
-            totalRSS += rss.totalScore;
-
-            console.timeEnd(asset.underlyingSymbol);
-          })
-      );
-    }
-
-    await Promise.all(promises);
-
-    const averageRSS = await weightedCalculation(async () => {
-      return totalRSS / assets.length / 100;
-    }, 15);
-
-    const upgradeable = await weightedCalculation(async () => {
-      try {
-        const { 0: admin, 1: upgradeable } =
-          await fuse.contracts.FusePoolLens.methods
-            .getPoolOwnership(comptroller)
-            .call({ gas: 1e18 });
-
-        // These addresses MUST be ALL LOWERCASE!
-        const rariMultisigs = [
-          "0xa731585ab05fc9f83555cf9bff8f58ee94e18f85",
-          "0x5ea4a9a7592683bf0bc187d6da706c6c4770976f",
-          "0x7d7ec1c9b40f8d4125d2ee524e16b65b3ee83e8f",
-          "0x7b502f1aa0f48b83ca6349e1f42cacd8150307a6",
-          "0x521cf3d673f4b2025be0bdb03d6410b111cd17d5",
-          "0x49529a7ccbd9f8cabbfa36c65feb39ae08bdea0f",
-          "0x639572471f2f318464dc01066a56867130e45e25",
-          "0x7b34e07da62c716ab79390d37e09182b48f1936d",
-          "0x0cf30dc0d48604a301df8010cdc028c055336b2e",
-        ];
-
-        if (rariMultisigs.includes(admin.toLowerCase())) {
-          return 1;
-        }
-
-        return upgradeable ? 0 : 1;
-      } catch (e) {
-        // Assume upgradeable.
-        return 0;
+        return scoreBlock;
       }
-    }, 10);
+    }))
+    // resolve array of ScoreBlocks (both score for the asset + info (cf, li, tokendown, etc))
+    resolve(scores as ScoreBlock[]);
+  })
+  .then( (scores: ScoreBlock[]) => {
 
-    const mustPass = await weightedCalculation(async () => {
-      const comptrollerContract = new fuse.web3.eth.Contract(
-        JSON.parse(
-          fuse.compoundContracts["contracts/Comptroller.sol:Comptroller"].abi
-        ),
-        comptroller
-      );
+    // return multisig score from overrides, false if no override
+    const multisigScore = fetchMultisigOverride(poolID);
 
-      // Ex: 8
-      const liquidationIncentive =
-        (await comptrollerContract.methods
-          .liquidationIncentiveMantissa()
-          .call()) /
-          1e16 -
-        100;
+    // calc max of scores
+    const overallScore = calcOverall(scores);
+    
+    return {
+      overallScore,
+      multisigScore,
+      scores,
+    };
+  })
 
-      for (let i = 0; i < assetsRSS.length; i++) {
-        const rss = assetsRSS[i];
-        const asset = assets[i];
+}
 
-        // Ex: 75
-        const collateralFactor = asset.collateralFactor / 1e16;
+// All of individual asset scoring done here
+const scoreAsset = async (addressFromOverride: string, assetData: AssetData):Promise<ScoreBlock> => {
 
-        // If the AMM liquidity is less than 2x the $ amount supplied, fail
-        if (rss.liquidityUSD < 2 * asset.totalSupplyUSD) {
-          return 0;
-        }
+  const override = await fetchTestOverride(addressFromOverride)
 
-        // If any of the RSS asset scores are less than 60, fail
-        if (rss.totalScore < 60) {
-          return 0;
-        }
+  // asset data from assetData api
+  const { 
+    assetAddress,
+    assetSymbol,
+    collateralFactor, 
+    liquidationIncentive, 
+    totalLiquidity, 
+    marketCap, 
+    priceChange, 
+    audits, 
+    fully_diluted_value, 
+    twitterFollowers, 
+    lpAddresses, 
+    tokenDown 
+  } = assetData;
 
-        // If the collateral factor and liquidation incentive do not have at least a 5% safety margin, fail
-        if (collateralFactor + liquidationIncentive > 95) {
-          /* 
-        
-          See this tweet for why: https://twitter.com/transmissions11/status/1378862288266960898
-        
-          TLDR: If CF and LI add up to be greater than 100 then any liquidation will result in instant insolvency. 95 has been determined to be the highest sum that could be considered "safe".
-        
-          */
+  const crash = ():number => {
 
-          return 0;
-        }
+    const twitterTest = override.crash.twitter;
+    const auditTest   = override.crash.audit;
+    const mktFDVTest   = override.crash.marketCap;
 
-        // If the liquidation incentive is less than or equal to 1/10th of the collateral factor, fail
-        if (liquidationIncentive <= collateralFactor / 10) {
-          return 0;
-        }
-      }
+    const twitterScore   = twitterFollowers < 500 && twitterTest  ? 1 : 0;
+    const auditScore     = !audits && auditTest ? 1 : 0;
+    const marketCapScore = marketCap < 0.03 * fully_diluted_value && mktFDVTest ? 1 : 0;
 
-      return 1;
-    }, 20);
-
-    response.setHeader("Cache-Control", "s-maxage=3600");
-    response.json({
-      liquidity,
-      collateralFactor,
-      reserveFactor,
-      utilization,
-      averageRSS,
-      upgradeable,
-      mustPass,
-
-      totalScore:
-        liquidity +
-          collateralFactor +
-          reserveFactor +
-          utilization +
-          averageRSS +
-          upgradeable +
-          mustPass || 0,
-
-      lastUpdated,
-    });
-
-    console.log("done!");
-  } else {
-    response.status(404).send("Specify address or poolID!");
+    return twitterScore + auditScore + marketCapScore;
   }
-};
+
+  const liquidity = ():number => {
+
+    const totalLiquidityTest = override.liquidity.totalLiquidity;
+    const lpAddressesTest    = override.liquidity.lpAddresses;
+
+    const totalLiquidityScore = totalLiquidity < 1000000 && totalLiquidityTest ? (totalLiquidity < 200000 ? 2 : 1) : 0;
+    const lpAddressesScore    = lpAddresses < 100 && lpAddressesTest ? 1 : 0;
+
+    return totalLiquidityScore + lpAddressesScore;
+  }
+
+  const volatility = ():number => {
+
+    const marketCapTest  = override.volatility.marketCap;
+    const volatilityTest = override.volatility.volatility;
+    
+    const marketCapScore = marketCap < 600000000 && marketCapTest ? (marketCap < 100000000 && marketCapTest ? (marketCap < 30000000 && marketCapTest ? 3 : 2) : 1) : 0;
+    
+    const doublePriceChange = priceChange * 2;
+    const slippage = collateralFactor / 2;
+
+    const volatilityScore = priceChange > .1 && doublePriceChange < (1 - collateralFactor - liquidationIncentive) && doublePriceChange < liquidationIncentive - slippage && volatilityTest ? 1 : 0;
+
+    return marketCapScore + volatilityScore;
+  }
+
+  const historical = async ():Promise<number> => {
+
+    const historicalTest = override.historical.backtest;
+    
+    const historicalScore = collateralFactor > 1 - liquidationIncentive - tokenDown && historicalTest ? 1 : 0;
+    
+    return historicalScore;
+  }
+
+  const score:Score = {
+    address   : assetAddress,
+    symbol    : assetSymbol,
+
+    historical: await historical(),
+    crash     : crash(),
+    volatility: volatility(),
+    liquidity : liquidity()
+  }
+
+  const assetInfo = {
+    collateralFactor,
+    tokenDown,
+    marketCap,
+  }
+
+  score.overall = max(score.historical as number, score.crash as number, score.volatility as number, score.liquidity as number)
+
+  return {
+    score,
+    assetInfo
+  } as ScoreBlock;
+}
+
+//  and only return the variables needed for risk calculation
+const congregateAssetData = async (
+  asset: USDPricedFuseAsset,
+  addressFromOverride: string,
+  comptroller   : any,
+  pairProvider  : string
+):Promise<AssetData> => {
+
+  const assetAddress = asset.underlyingToken;
+  const assetSymbol  = asset.underlyingSymbol;
+
+  const fetchedData: FetchedData = await assetDataFetch(addressFromOverride);
+
+  const [
+    audits,
+    priceChange,
+    liquidationIncentive,
+    totalLiquidity,
+    marketCap,
+    fully_diluted_value,
+    twitterFollowers,
+    lpAddresses,
+    collateralFactor
+  ] = await Promise.all([
+    
+    checkAudits(fetchedData.tickers),
+    calcVolatility(fetchedData.prices),
+
+    ((await comptroller.methods
+        .liquidationIncentiveMantissa().call()) / 1e18) - 1,
+
+    fetchedData.totalLiquidity,
+    fetchedData.asset_market_cap,
+    fetchedData.fully_diluted_value,
+    fetchedData.twitter_followers,
+    fetchedData.ethplorer,
+
+    (asset.collateralFactor / 1e18)
+  ])
+
+  // make request to historical backtest
+  const tokenDown: number = await historicalFetch(addressFromOverride, pairProvider, {liquidationIncentive, collateralFactor})
+    .then( (data) => data.tokenDown);
+
+  return {
+    assetAddress,    
+    assetSymbol,
+    audits,
+    priceChange,
+    liquidationIncentive,
+    totalLiquidity,
+    marketCap,
+    fully_diluted_value,
+    twitterFollowers,
+    lpAddresses,
+    collateralFactor,
+    tokenDown
+  }
+}
+
+// make get request to assetData api (separate api for cacheing)
+const assetDataFetch = async (assetAddress: string):Promise<FetchedData> => {
+  return await fetch(url + '/assetData?address=' + assetAddress).then(res => res.json()) as FetchedData;
+}
+
+// fetch data from sushiswap or uniswap (specified in pair)
+const historicalFetch = async (assetAddress: string, pairProvider: string, poolData: {liquidationIncentive: number, collateralFactor: number}):Promise<{ tokenDown: number }> => {
+  const weekOfBlocks = 6500;
+
+  // TODO: replace with normal get request, faster
+  const config: BacktestConfig = {
+    address      : assetAddress,
+    period       : 68, // roughly 15 mins
+    segmentsBack : weekOfBlocks, // one week of blocks
+    end          : await fetchLatestBlock(web3),
+    financials   : poolData,
+    provider     : pairProvider
+  }
+
+  return await fetch(url + "/historical", {
+    method : "POST",
+    headers: {
+      'Content-type': 'application/json'
+    },
+    body   : JSON.stringify(config)
+  })
+  .then((res) => res.json())
+}
+
+// test 
+const testSources = async (address: string): Promise<string> => {
+  const coingecko = await checkCoingecko(address);
+  const sushiswap = await checkSushiswap(address);
+  const uniswap   = await checkUniswap(address);
+
+  if (coingecko && (sushiswap || uniswap)) {
+    return uniswap ? 'uniswap' : 'sushiswap';
+  } else {
+    console.log('asset not listed on any pool provider');
+    return 'none'
+  }
+}

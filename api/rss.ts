@@ -3,7 +3,6 @@ import { VercelRequest, VercelResponse } from "@vercel/node";
 // tools and shi
 import Web3    from 'web3';
 import fetch   from "node-fetch";
-import _       from 'lodash';
 import { max } from "mathjs";
 
 // fuse utils

@@ -2,10 +2,10 @@
 import sushiData from '@sushiswap/sushi-data';
 
 // functions
-import { sushiswapFetchPairID } from '../../../src/utils/rssUtils';
+import { sushiswapFetchPairID } from '../mainUtils';
 
 // types
-import { SushiBlock } from '../../../src/utils/rssUtils';
+import { SushiBlock } from '../mainUtils';
 
 // eslint-disable-next-line import/no-anonymous-default-export
 export default async(blocks: number[], address: string): Promise<number[]> => {

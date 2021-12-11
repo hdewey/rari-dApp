@@ -1,14 +1,14 @@
 import { VercelRequest, VercelResponse } from "@vercel/node";
 
 // types
-import { BacktestConfig, PriceSet, tokenToUSD } from "../src/utils/rssUtils";
+import { BacktestConfig, PriceSet, tokenToUSD } from "./rss-utils/mainUtils";
 
 // functions
-import { twap, blocksToQuery } from '../src/utils/rssUtils';
+import { twap, blocksToQuery } from './rss-utils/mainUtils';
 
 // query sushiswap
-import sushiswap from "./rss-modules/fetch/sushiFetch";
-import uniswap   from "./rss-modules/fetch/uniFetch";
+import sushiswap from "./rss-utils/fetch/sushiFetch";
+import uniswap   from "./rss-utils/fetch/uniFetch";
 
 // cache historical data on vercel for each asset
 // eslint-disable-next-line import/no-anonymous-default-export
@@ -48,37 +48,37 @@ const calcTokenDown = async (priceSet: PriceSet, financials: {liquidationIncenti
 
     for (let i = 0; i < prices.length - 1; i++) {
 
-        for (let x = 0; x + i < prices.length - 1; x++) {
+      for (let x = 0; x + i < prices.length - 1; x++) {
 
-          // block to calculate change from beginning of liquidation period to successful liquidation
-          let blockOriginal = prices[i];
+        // block to calculate change from beginning of liquidation period to successful liquidation
+        let blockOriginal = prices[i];
 
-          let block0 = prices[i + x];
-          let block1 = prices[i + x + 1];
+        let block0 = prices[i + x];
+        let block1 = prices[i + x + 1];
 
-          let currentTWAP = twap(block0, block1);
+        let currentTWAP = twap(block0, block1);
 
-          if (li > ((currentTWAP - block1) / currentTWAP) + slippage) {
-            // liquidation successful
-            
-            // token down = (beginning of liquidation price - period of liquidation average price) / beginning of liquidation price
-            let td = Math.abs((blockOriginal - currentTWAP) / blockOriginal);
-            
-            // push token down to array of all token downs
-            tokenDowns.push(td);
-            break;
-          } else if ( x + i > prices.length) {
-            // liquidation never feasible
-            console.log('this is bad');
-            break;
-          } else {
-            // debug
-            // console.log(`block ${i} cannot be liquidated at period ${x}`)
-          }
+        if (li > ((currentTWAP - block1) / currentTWAP) + slippage) {
+          // liquidation successful
+          
+          // token down = (beginning of liquidation price - period of liquidation average price) / beginning of liquidation price
+          let td = Math.abs((blockOriginal - currentTWAP) / blockOriginal);
+          
+          // push token down to array of all token downs
+          tokenDowns.push(td);
+          break;
+        } else if ( x + i > prices.length) {
+          // liquidation never feasible
+          console.log('this is bad');
+          break;
+        } else {
+          // debug
+          // console.log(`block ${i} cannot be liquidated at period ${x}`)
         }
+      }
     }
   } finally {
-    // max token down
+    // max array of token downs
     return Math.max(...tokenDowns);
   }
 }

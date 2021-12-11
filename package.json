@@ -73,7 +73,8 @@
     "uuid": "^8.3.2",
     "web3": "^1.2.11",
     "web3modal": "^1.9.0",
-    "window-table": "^1.0.0-alpha.11"
+    "window-table": "^1.0.0-alpha.11",
+    "uni-data": "git://github.com/hdewey/sushi-data"
   },
   "scripts": {
     "typecheck": "tsc --skipLibCheck -p ./tsconfig.json",

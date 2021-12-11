@@ -1,7 +1,9 @@
 import { VercelRequest, VercelResponse } from "@vercel/node";
-import { calcTotalLiquidity, FetchedData, queuedRequest } from "../src/utils/rssUtils";
 
-// Returns set of asset data points for use in scoring
+import { calcTotalLiquidity, FetchedData, queuedRequest } from "./rss-utils/mainUtils";
+
+// Returns set of asset specific data points for use in scoring (reused for subsequent pools with the same asset)
+// eslint-disable-next-line import/no-anonymous-default-export
 export default async (request: VercelRequest, response: VercelResponse) => {
   const { address } = request.query;
 
@@ -17,6 +19,7 @@ export default async (request: VercelRequest, response: VercelResponse) => {
 
 // fetch data points from variety of sources for specific address
 const fetchAssetData = async (address):Promise<FetchedData> => {
+  
   const coingeckoRequest = async () => {
     let data:any = await queuedRequest(`https://api.coingecko.com/api/v3/coins/ethereum/contract/${address}`, `coingecko`, address)
 

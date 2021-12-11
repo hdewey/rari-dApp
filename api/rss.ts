@@ -18,10 +18,10 @@ import {
   ScoreBlock, 
   returnSafeTest, returnMissingTest, 
   fetchAddressOverride, fetchMultisigOverride, fetchTestOverride  
-} from '../src/utils/rssUtils';
+} from './rss-utils/mainUtils';
 
 // types
-import { AssetData, Score, FetchedData, BacktestConfig } from "../src/utils/rssUtils";
+import { AssetData, Score, FetchedData, BacktestConfig } from "./rss-utils/mainUtils";
  
 // geth (alchemy)
 const fuse = initFuseWithProviders(alchemyURL);

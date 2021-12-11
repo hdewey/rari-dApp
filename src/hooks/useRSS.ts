@@ -1,5 +1,5 @@
 import { useQuery } from "react-query";
-import { Score, ScoreBlock } from "utils/rssUtils";
+import { ScoreBlock } from "utils/rssUtils";
 
 export const letterScore = (totalScore: number | string) => {
 

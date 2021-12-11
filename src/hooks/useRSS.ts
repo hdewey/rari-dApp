@@ -1,80 +1,44 @@
 import { useQuery } from "react-query";
+import { Score, ScoreBlock } from "utils/rssUtils";
 
-export const useAssetRSS = (address: string) => {
-  const { data } = useQuery(
-    address + " rss",
-    () => {
-      return fetch(
-        // Since running the vercel functions requires a Vercel account and is super slow,
-        // just fetch this data from the live site in development:
-        (process.env.NODE_ENV === "development"
-          ? "https://app.rari.capital"
-          : "") +
-          "/api/rss?address=" +
-          address
-      )
-        .then((res) => res.json())
-        .catch((e) => {
-          console.log("Could not fetch RSS!");
-          console.log(e);
-        }) as Promise<{
-        mcap: number;
-        volatility: number;
-        liquidity: number;
-        swapCount: number;
-        coingeckoMetadata: number;
-        exchanges: number;
-        transfers: number;
+export const letterScore = (totalScore: number | string) => {
 
-        lastUpdated: string;
-        totalScore: number;
-      }>;
-    },
-    {
-      refetchOnMount: false,
-      refetchOnWindowFocus: false,
-      refetchOnReconnect: false,
-      // 1 day
-      cacheTime: 8.64e7,
-    }
-  );
-
-  return data;
-};
-
-export const letterScore = (totalScore: number) => {
-  if (totalScore >= 95) {
-    return "A++";
+  if (totalScore === "*") {
+    return "*"
+  } else {
+    totalScore = totalScore as number
   }
 
-  if (totalScore >= 90) {
-    return "A+";
-  }
-
-  if (totalScore >= 80) {
+  if (totalScore === 1 || totalScore === 0) {
     return "A";
   }
 
-  if (totalScore >= 70) {
-    return "A-";
-  }
-
-  if (totalScore >= 60) {
+  if (totalScore === 2) {
     return "B";
   }
 
-  if (totalScore >= 50) {
+  if (totalScore === 3) {
     return "C";
   }
 
-  if (totalScore >= 40) {
+  if (totalScore === 4) {
     return "D";
   }
 
-  if (totalScore >= 30) {
+  if (totalScore === 5) {
+    return "E";
+  }
+
+  if (totalScore === 6) {
     return "F";
-  } else {
-    return "UNSAFE";
+  }
+
+  if (totalScore === 7) {
+    return "F";
+  }
+
+  else {
+    return "UNSAFE"
   }
 };
 
@@ -85,27 +49,14 @@ export const usePoolRSS = (poolId: string | number) => {
       return fetch(
         // Since running the vercel functions requires a Vercel account and is super slow,
         // just fetch this data from the live site in development:
-        (process.env.NODE_ENV === "development"
-          ? "https://app.rari.capital"
-          : "") +
-          "/api/rss?poolID=" +
+          "https://rari-rss.vercel.app/api/rss?poolID=" +
           poolId
       )
         .then((res) => res.json())
         .catch((e) => {
           console.log("Could not fetch RSS!");
           console.log(e);
-        }) as Promise<{
-        liquidity: number;
-        collateralFactor: number;
-        reserveFactor: number;
-        utilization: number;
-        averageRSS: number;
-        upgradeable: number;
-        mustPass: number;
-        totalScore: number;
-        lastUpdated: string;
-      }>;
+        }) as Promise<RiskData>;
     },
     {
       refetchOnMount: false,
@@ -118,3 +69,23 @@ export const usePoolRSS = (poolId: string | number) => {
 
   return data;
 };
+
+
+export const assetScores = (rss: RiskData) => {
+  const scores = rss.scores as ScoreBlock[];
+
+  return scores.map( (score ) => {
+    return ({
+      symbol: score.score.symbol,
+      score:  letterScore(score.score.overall)
+    })
+  })
+}
+
+type RiskData = {
+  poolID: number | string,
+  overallScore: number | string,
+  multisigScore: { poolID: number | string, multisig: boolean }
+  scores: ScoreBlock[]
+  lastUpdated: string;
+}

@@ -501,7 +501,7 @@ export interface Score {
   volatility: number | string,
   crash     : number | string,
   liquidity : number | string,
-  overall  ?: number | string
+  overall   : number | string
 }
 
 export interface BacktestConfig {

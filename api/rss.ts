@@ -194,7 +194,8 @@ const scoreAsset = async (addressFromOverride: string, assetData: AssetData):Pro
     historical: await historical(),
     crash     : crash(),
     volatility: volatility(),
-    liquidity : liquidity()
+    liquidity : liquidity(),
+    overall   : NaN
   }
 
   const assetInfo = {

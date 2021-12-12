@@ -5,7 +5,7 @@ import uniData from 'uni-data';
 import { uniswapFetchPairID } from '../mainUtils';
 
 // types
-import { SushiBlock } from '../mainUtils';
+import { SushiBlock as UniBlock } from '../mainUtils';
 
 // eslint-disable-next-line import/no-anonymous-default-export
 export default async(blocks: number[], address: string): Promise<number[]> => {
@@ -13,11 +13,11 @@ export default async(blocks: number[], address: string): Promise<number[]> => {
   const pairID = await uniswapFetchPairID(address);
 
   // returns an array of SushiBlocks for each block specified
-  const tokenPrices:SushiBlock[] = await uniData
+  const tokenPrices:UniBlock[] = await uniData
     .timeseries({blocks: blocks, target: uniData.exchange.pair}, {pair_address: pairID});
 
   // create array of soley price data
-  const parsedPrices = tokenPrices.map( (sushiBlock: SushiBlock) => {
+  const parsedPrices = tokenPrices.map( (sushiBlock: UniBlock) => {
     switch (sushiBlock.data.token1.symbol.toLowerCase()) {
       case 'weth':
         return sushiBlock.data.token1Price;
